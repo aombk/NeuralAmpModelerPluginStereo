@@ -16,7 +16,7 @@
 
 const int kNumPresets = 1;
 // The plugin is mono inside
-constexpr size_t kNumChannelsInternal = 1;
+constexpr size_t kNumChannelsInternal = 2;
 
 class NAMSender : public iplug::IPeakAvgSender<>
 {
@@ -173,7 +173,7 @@ private:
   std::unique_ptr<nam::DSP> mEncapsulated;
 
   // The resampling wrapper
-  dsp::ResamplingContainer<NAM_SAMPLE, 1, 12> mResampler;
+  dsp::ResamplingContainer<NAM_SAMPLE, 2, 12> mResampler;
 
   // Used to check that we don't get too large a block to process.
   int mMaxExternalBlockSize = 0;
@@ -225,7 +225,11 @@ private:
   // it wasn't successful.
   dsp::wav::LoadReturnCode _StageIR(const WDL_String& irPath);
 
-  bool _HaveModel() const { return this->mModel != nullptr; };
+  bool _HaveModel() const
+  {
+    return (mModelL != nullptr && mModelR != nullptr);
+  }
+
   // Prepare the input & output buffers
   void _PrepareBuffers(const size_t numChannels, const size_t numFrames);
   // Manage pointers
@@ -281,12 +285,16 @@ private:
   // Noise gates
   dsp::noise_gate::Trigger mNoiseGateTrigger;
   dsp::noise_gate::Gain mNoiseGateGain;
-  // The model actually being used:
-  std::unique_ptr<ResamplingNAM> mModel;
+  // We'll run the same model on L & R:
+  std::unique_ptr<ResamplingNAM> mModelL;
+  std::unique_ptr<ResamplingNAM> mModelR;
+
   // And the IR
   std::unique_ptr<dsp::ImpulseResponse> mIR;
   // Manages switching what DSP is being used.
-  std::unique_ptr<ResamplingNAM> mStagedModel;
+  std::unique_ptr<ResamplingNAM> mStagedModelL;
+  std::unique_ptr<ResamplingNAM> mStagedModelR;
+
   std::unique_ptr<dsp::ImpulseResponse> mStagedIR;
   // Flags to take away the modules at a safe time.
   std::atomic<bool> mShouldRemoveModel = false;
