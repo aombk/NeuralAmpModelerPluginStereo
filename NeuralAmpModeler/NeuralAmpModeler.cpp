@@ -830,28 +830,37 @@ void NeuralAmpModeler::_PrepareIOPointers(const size_t numChannels)
   _AllocateIOPointers(numChannels);
 }
 
+// ── REPLACE FULL FUNCTION ─────────────────────────────────────────────
 void NeuralAmpModeler::_ProcessInput(sample** inputs, const size_t nFrames, const size_t nChansIn,
                                      const size_t nChansOut)
 {
-  // ── STEREO MOD – supports 1 or 2 internal lanes ────────────────────────────
+  // nChansOut == internal lanes (1 = mono path, 2 = stereo path)
   if (nChansOut != 1 && nChansOut != 2)
     throw std::runtime_error("Expected 1 or 2 internal channels!");
 
-  double gain = mInputGain;
-#ifndef APP_API
-  gain /= (float)nChansIn; // DAW ∶ average any stereo input
-#endif
+  const double gain = mInputGain;
+  const bool blendToMono = (nChansOut == 1); // Stereo switch OFF
 
   for (size_t s = 0; s < nFrames; ++s)
   {
-    // Left
-    mInputArray[0][s] = gain * inputs[0][s];
+    if (blendToMono)
+    {
+      // Mix L+R to mono (average). If host sent only L, just use that.
+      iplug::sample mono =
+        (nChansIn > 1) ? static_cast<iplug::sample>(0.5) * (inputs[0][s] + inputs[1][s]) : inputs[0][s];
 
-    // Right (if requested)
-    if (nChansOut == 2)
-      mInputArray[1][s] = (nChansIn > 1) ? gain * inputs[1][s] : mInputArray[0][s]; // duplicate mono
+      mInputArray[0][s] = gain * mono; // single internal lane
+    }
+    else
+    {
+      // True dual‑mono path
+      mInputArray[0][s] = gain * inputs[0][s]; // Left
+      mInputArray[1][s] = (nChansIn > 1) ? gain * inputs[1][s] // Right
+                                         : mInputArray[0][s]; // duplicate if mono input
+    }
   }
 }
+
 
 void NeuralAmpModeler::_ProcessOutput(sample** inputs, sample** outputs, const size_t nFrames, const size_t nChansIn,
                                       const size_t nChansOut)
