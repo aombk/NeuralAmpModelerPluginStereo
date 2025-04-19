@@ -89,7 +89,7 @@ NeuralAmpModeler::NeuralAmpModeler(const InstanceInfo& info)
   GetParam(kNoiseGateActive)->InitBool("NoiseGateActive", true);
   GetParam(kEQActive)->InitBool("ToneStack", true);
   GetParam(kOutputMode)->InitEnum("OutputMode", 1, {"Raw", "Normalized", "Calibrated"}); // TODO DRY w/ control
-  GetParam(kStereoMode)->InitBool("Stereo", false); // false = mono
+  GetParam(kStereoMode)->InitBool("Stereo", false);
   GetParam(kIRToggle)->InitBool("IRToggle", true);
   GetParam(kCalibrateInput)->InitBool(kCalibrateInputParamName.c_str(), kDefaultCalibrateInput);
   GetParam(kInputCalibrationLevel)
@@ -376,20 +376,18 @@ if (_HaveModel())
 
 void NeuralAmpModeler::OnReset()
 {
-  const auto sampleRate = GetSampleRate();
-  const int maxBlockSize = GetBlockSize();
+  const double sr = GetSampleRate();
+  const int max = GetBlockSize();
 
-  // Tail is because the HPF DC blocker has a decay.
-  // 10 cycles should be enough to pass the VST3 tests checking tail behavior.
-  // I'm ignoring the model & IR, but it's not the end of the world.
-  const int tailCycles = 10;
-  SetTailSize(tailCycles * (int)(sampleRate / kDCBlockerFrequency));
-  mInputSender.Reset(sampleRate);
-  mOutputSender.Reset(sampleRate);
-  // If there is a model or IR loaded, they need to be checked for resampling.
-  _ResetModelAndIR(sampleRate, GetBlockSize());
-  if (mModelR) mModelR->Reset(sampleRate, maxBlockSize);
-  mToneStack->Reset(sampleRate, maxBlockSize);
+  SetTailSize(10 * (int)(sr / kDCBlockerFrequency));
+
+  if (mModel)
+    mModel->Reset(sr, max);
+  if (mModelR)
+    mModelR->Reset(sr, max); // <-- add this
+
+  _ResetModelAndIR(sr, max);
+  mToneStack->Reset(sr, max);
   _UpdateLatency();
 }
 
@@ -435,20 +433,29 @@ bool NeuralAmpModeler::SerializeState(IByteChunk& chunk) const
 
 int NeuralAmpModeler::UnserializeState(const IByteChunk& chunk, int startPos)
 {
-  // Look for the expected header. If it's there, then we'll know what to do.
+  // ── 1. verify header -------------------------------------------------------
   WDL_String header;
-  int pos = startPos;
-  pos = chunk.GetStr(header, pos);
-
-  const char* kExpectedHeader = "###NeuralAmpModeler###";
-  if (strcmp(header.Get(), kExpectedHeader) == 0)
-  {
-    return _UnserializeStateWithKnownVersion(chunk, pos);
-  }
-  else
-  {
+  int pos = chunk.GetStr(header, startPos);
+  if (strcmp(header.Get(), "###NeuralAmpModeler###") != 0)
     return _UnserializeStateWithUnknownVersion(chunk, startPos);
+
+  // ── 2. let the vendor helper consume everything it knows (13 params) -------
+  pos = _UnserializeStateWithKnownVersion(chunk, pos);
+
+  // ── 3. read any *extra* doubles the helper left behind ---------------------
+  const int bytesLeft = chunk.Size() - pos;
+  const int doublesLeft = bytesLeft / (int)sizeof(double);
+  int idx = kOutputMode + 1; // first new param = kStereoMode
+
+  for (int i = 0; i < doublesLeft && idx < kNumParams; ++i, ++idx)
+  {
+    double v = 0.0;
+    pos = chunk.GetBytes(&v, (int)sizeof(double), pos); // pull one double
+    GetParam(idx)->Set(v); // store to IParam
   }
+
+  // ── done -------------------------------------------------------------------
+  return pos;
 }
 
 void NeuralAmpModeler::OnUIOpen()
@@ -582,15 +589,16 @@ void NeuralAmpModeler::_ApplyDSPStaging()
     mShouldRemoveIR = false;
   }
   // Move things from staged to live
-  if (mStagedModel && mStagedModelR)
+  if (mStagedModel  && (!GetParam(kStereoMode)->Bool() || mStagedModelR)) // right needed?
   {
     mModel = std::move(mStagedModel);
-    mModelR = std::move(mStagedModelR);
+    mModelR = std::move(mStagedModelR); // OK if nullptr when Stereo=off
     mNewModelLoadedInDSP = true;
     _UpdateLatency();
     _SetInputGain();
     _SetOutputGain();
   }
+  
   if (mStagedIR != nullptr)
   {
     mIR = std::move(mStagedIR);
@@ -627,14 +635,17 @@ void NeuralAmpModeler::_FallbackDSP(iplug::sample** inputs, iplug::sample** outp
 void NeuralAmpModeler::_ResetModelAndIR(const double sampleRate, const int maxBlockSize)
 {
   // Model
-  if (mStagedModel != nullptr)
-  {
+  // ❶ staged models
+  if (mStagedModel)
     mStagedModel->Reset(sampleRate, maxBlockSize);
-  }
-  else if (mModel != nullptr)
-  {
+  if (mStagedModelR)
+    mStagedModelR->Reset(sampleRate, maxBlockSize); // NEW
+
+  // ❷ live models
+  if (!mStagedModel && mModel)
     mModel->Reset(sampleRate, maxBlockSize);
-  }
+  if (!mStagedModelR && mModelR)
+    mModelR->Reset(sampleRate, maxBlockSize); // NEW
 
   // IR
   if (mStagedIR != nullptr)
