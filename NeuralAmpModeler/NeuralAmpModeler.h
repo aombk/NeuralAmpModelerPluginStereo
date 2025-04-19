@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "NeuralAmpModelerCore/NAM/dsp.h"
 #include "AudioDSPTools/dsp/ImpulseResponse.h"
@@ -45,6 +45,7 @@ enum EParams
   kCalibrateInput,
   kInputCalibrationLevel,
   kOutputMode,
+  kStereoMode,
   kNumParams
 };
 
@@ -173,7 +174,7 @@ private:
   std::unique_ptr<nam::DSP> mEncapsulated;
 
   // The resampling wrapper
-  dsp::ResamplingContainer<NAM_SAMPLE, 2, 12> mResampler;
+  dsp::ResamplingContainer<NAM_SAMPLE, 1, 12> mResampler;
 
   // Used to check that we don't get too large a block to process.
   int mMaxExternalBlockSize = 0;
@@ -225,11 +226,7 @@ private:
   // it wasn't successful.
   dsp::wav::LoadReturnCode _StageIR(const WDL_String& irPath);
 
-  bool _HaveModel() const
-  {
-    return (mModelL != nullptr && mModelR != nullptr);
-  }
-
+  bool _HaveModel() const { return (mModel && mModelR); };
   // Prepare the input & output buffers
   void _PrepareBuffers(const size_t numChannels, const size_t numFrames);
   // Manage pointers
@@ -285,16 +282,14 @@ private:
   // Noise gates
   dsp::noise_gate::Trigger mNoiseGateTrigger;
   dsp::noise_gate::Gain mNoiseGateGain;
-  // We'll run the same model on L & R:
-  std::unique_ptr<ResamplingNAM> mModelL;
-  std::unique_ptr<ResamplingNAM> mModelR;
-
+  // The model actually being used:
   // And the IR
   std::unique_ptr<dsp::ImpulseResponse> mIR;
   // Manages switching what DSP is being used.
-  std::unique_ptr<ResamplingNAM> mStagedModelL;
-  std::unique_ptr<ResamplingNAM> mStagedModelR;
-
+  std::unique_ptr<ResamplingNAM> mModel; // STEREO FIX
+  std::unique_ptr<ResamplingNAM> mModelR; // STEREO FIX
+  std::unique_ptr<ResamplingNAM> mStagedModel; // STEREO FIX
+  std::unique_ptr<ResamplingNAM> mStagedModelR; // STEREO FIX
   std::unique_ptr<dsp::ImpulseResponse> mStagedIR;
   // Flags to take away the modules at a safe time.
   std::atomic<bool> mShouldRemoveModel = false;
